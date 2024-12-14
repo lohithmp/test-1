@@ -1,81 +1,104 @@
-    public TransactionResponse<String> invalidateToken() {
-        tokenValidator.validateEmptyToken(SecurityContextHolder.getContext().getAuthentication().getCredentials());
-        logger.info(" Invalidate Token - Service");
-        EPayPrincipal ePayPrincipal = EPayIdentityUtil.getUserPrincipal();
-        TokenDto tokenDto = tokenDao.getActiveTokenByMID(ePayPrincipal.getMid(), ePayPrincipal.getToken(),TokenStatus.ACTIVE).orElseThrow(() -> new TransactionException(ErrorConstants.NOT_FOUND_ERROR_CODE, MessageFormat.format(ErrorConstants.NOT_FOUND_ERROR_MESSAGE, "Active Token")));
-        buildTokenDtoForInvalidate(tokenDto);
-        tokenDao.saveToken(tokenDto);
-        return TransactionResponse.<String>builder().data(List.of("Token invalidated successfully")).status(1).build();
-    }
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
 
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
 
+import java.text.MessageFormat;
+import java.util.Optional;
 
- @Test
-    void testInvalidateToken() {
-        try (MockedStatic<EPayIdentityUtil> mocked = Mockito.mockStatic(EPayIdentityUtil.class, Mockito.CALLS_REAL_METHODS)) {
-            EPayPrincipal ePayPrincipal = new EPayPrincipal();
-            ePayPrincipal.setMid("Mid_34555");
-            ePayPrincipal.setTokenType("==efmmc2342dvxckvxjvin");
+class TokenServiceTest {
 
+    @Mock
+    private TokenDao tokenDao;
 
+    @Mock
+    private TokenValidator tokenValidator;
 
-            mocked.when(EPayIdentityUtil::getUserPrincipal).thenReturn(ePayPrincipal);
-            doNothing().when(validator).validateEmptyToken(any());
-            when(tokenDao.getActiveTokenByMID(buildTokenDto().getMerchantId(), ePayPrincipal.getToken(), TokenStatus.ACTIVE)).thenReturn(Optional.ofNullable(buildTokenDto()));
-            when(tokenDao.saveToken(any(TokenDto.class))).thenAnswer(invocationOnMock -> {
-                TokenDto tokenDto1 = invocationOnMock.getArgument(0);
-                tokenDto1.setGeneratedToken("==efmmc2342dvxckvxjvin");
-                tokenDto1.setTokenType(TokenType.TRANSACTION);
-                tokenDto1.setId(UUID.fromString("462c0c15-6c6c-4061-b2f2-852fa070816a"));
-                tokenDto1.setStatus(TokenStatus.ACTIVE);
-                return tokenDto1;
-            });
+    @Mock
+    private EPayIdentityUtil ePayIdentityUtil;
 
-            TransactionResponse<String> invalidTokenResponse = tokenService.invalidateToken();
+    @InjectMocks
+    private TokenService tokenService; // Replace TokenService with the class where this method is implemented.
 
-            verify(tokenDao, times(1)).getActiveTokenByMID(buildTokenDto().getMerchantId(), ePayPrincipal.getToken(), TokenStatus.ACTIVE);
-            verify(tokenDao, times(1)).saveToken(any(TokenDto.class));
+    @Mock
+    private SecurityContext securityContext;
 
-            assertNotNull(invalidTokenResponse);
-            assertEquals(1, invalidTokenResponse.getStatus());
-            assertEquals(1, invalidTokenResponse.getData().size());
-        }
+    @Mock
+    private Authentication authentication;
+
+    private EPayPrincipal mockPrincipal;
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+
+        // Set up SecurityContext mock
+        when(securityContext.getAuthentication()).thenReturn(authentication);
+        SecurityContextHolder.setContext(securityContext);
     }
 
     @Test
-    void testInvalidateTokenFailure() {
-        try (MockedStatic<EPayIdentityUtil> mocked = Mockito.mockStatic(EPayIdentityUtil.class, Mockito.CALLS_REAL_METHODS)) {
-            EPayPrincipal ePayPrincipal = new EPayPrincipal();
-            ePayPrincipal.setMid("Mid_34555");
-            ePayPrincipal.setTokenType("==efmmc2342dvxckvxjvin");
+    void testInvalidateToken_Success() {
+        // Arrange
+        when(authentication.getCredentials()).thenReturn("mock-token");
+        doNothing().when(tokenValidator).validateEmptyToken("mock-token");
 
-            mocked.when(EPayIdentityUtil::getUserPrincipal).thenReturn(ePayPrincipal);
-            doThrow(new TransactionException(ErrorConstants.NOT_FOUND_ERROR_CODE, MessageFormat.format(ErrorConstants.NOT_FOUND_ERROR_MESSAGE, "Active User")))
-                    .when(tokenDao).getActiveTokenByMID(ePayPrincipal.getMid(), ePayPrincipal.getToken(), TokenStatus.ACTIVE);
+        mockPrincipal = new EPayPrincipal("mock-mid", "mock-token");
+        when(EPayIdentityUtil.getUserPrincipal()).thenReturn(mockPrincipal);
 
-            TransactionException validationException = assertThrows(TransactionException.class, () -> tokenService.invalidateToken());
+        TokenDto mockTokenDto = new TokenDto();
+        when(tokenDao.getActiveTokenByMID("mock-mid", "mock-token", TokenStatus.ACTIVE))
+                .thenReturn(Optional.of(mockTokenDto));
 
-            verify(tokenDao, times(1)).getActiveTokenByMID(ePayPrincipal.getMid(), ePayPrincipal.getToken(), TokenStatus.ACTIVE);
-            verify(tokenDao, times(0)).saveToken(any(TokenDto.class));
+        doNothing().when(tokenDao).saveToken(any(TokenDto.class));
 
-            assertNotNull(validationException);
-            assertEquals("1003", validationException.getErrorCode());
-            assertEquals("Active User is not found.", validationException.getErrorMessage());
-        }
+        // Act
+        TransactionResponse<String> response = tokenService.invalidateToken();
 
+        // Assert
+        assertNotNull(response);
+        assertEquals(1, response.getStatus());
+        assertEquals(List.of("Token invalidated successfully"), response.getData());
+
+        // Verify interactions
+        verify(tokenValidator).validateEmptyToken("mock-token");
+        verify(tokenDao).getActiveTokenByMID("mock-mid", "mock-token", TokenStatus.ACTIVE);
+        verify(tokenDao).saveToken(mockTokenDto);
     }
 
+    @Test
+    void testInvalidateToken_TokenNotFound() {
+        // Arrange
+        when(authentication.getCredentials()).thenReturn("mock-token");
+        doNothing().when(tokenValidator).validateEmptyToken("mock-token");
 
+        mockPrincipal = new EPayPrincipal("mock-mid", "mock-token");
+        when(EPayIdentityUtil.getUserPrincipal()).thenReturn(mockPrincipal);
 
+        when(tokenDao.getActiveTokenByMID("mock-mid", "mock-token", TokenStatus.ACTIVE))
+                .thenReturn(Optional.empty());
 
+        // Act & Assert
+        TransactionException exception = assertThrows(TransactionException.class, () -> {
+            tokenService.invalidateToken();
+        });
 
+        assertEquals(ErrorConstants.NOT_FOUND_ERROR_CODE, exception.getErrorCode());
+        assertEquals(
+                MessageFormat.format(ErrorConstants.NOT_FOUND_ERROR_MESSAGE, "Active Token"),
+                exception.getErrorMessage()
+        );
 
-
-Cannot invoke "org.springframework.security.core.Authentication.getCredentials()" because the return value of "org.springframework.security.core.context.SecurityContext.getAuthentication()" is null
-java.lang.NullPointerException: Cannot invoke "org.springframework.security.core.Authentication.getCredentials()" because the return value of "org.springframework.security.core.context.SecurityContext.getAuthentication()" is null
-	at com.epay.transaction.service.TokenService.invalidateToken(TokenService.java:103)
-	at com.epay.transaction.service.TokenServiceTest.testInvalidateToken(TokenServiceTest.java:145)
-	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
-	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
-	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
-
+        // Verify interactions
+        verify(tokenValidator).validateEmptyToken("mock-token");
+        verify(tokenDao).getActiveTokenByMID("mock-mid", "mock-token", TokenStatus.ACTIVE);
+        verifyNoMoreInteractions(tokenDao);
+    }
+}
